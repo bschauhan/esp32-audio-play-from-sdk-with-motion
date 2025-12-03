@@ -40,6 +40,8 @@ private:
   void handleVolume();      // GET /api/volume      → ?level=
   void handlePower();       // GET /api/power       → ?on=1/0
   void handleStatus();      // GET /api/status      → current status JSON
+  void handleEQ();          // GET/POST /api/eq      → EQ settings
+  void handleCrossfade();   // GET/POST /api/crossfade → crossfade settings
   void handleUploadPost();  // POST /upload (final response after streaming)
   void handleUploadStream();// POST /upload (streaming chunks from client)
   void handleDelete();      // GET /api/delete      → ?path= (delete file)

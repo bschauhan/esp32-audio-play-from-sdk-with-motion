@@ -52,6 +52,10 @@ void WebHandler::begin(AudioManager *audio, FileScanner *fs, StateMachine *sm) {
   _server->on("/api/volume",[this]() { this->handleVolume(); });
   _server->on("/api/power", [this]() { this->handlePower(); });
   _server->on("/api/status",[this]() { this->handleStatus(); });
+  _server->on("/api/eq", HTTP_GET, [this]() { this->handleEQ(); });
+  _server->on("/api/eq", HTTP_POST, [this]() { this->handleEQ(); });
+  _server->on("/api/crossfade", HTTP_GET, [this]() { this->handleCrossfade(); });
+  _server->on("/api/crossfade", HTTP_POST, [this]() { this->handleCrossfade(); });
   _server->on("/api/chime-settings", HTTP_GET, [this]() { this->handleChimeSettings(); });
   _server->on("/api/chime-settings", HTTP_POST, [this]() { this->handleChimeSettings(); });
   _server->on("/api/delete", [this]() { this->handleDelete(); });
@@ -183,6 +187,111 @@ void WebHandler::handleRoot() {
 
   <div class="row g-4 mt-1">
     
+    <div class="col-lg-6">
+      <div class="card shadow-sm h-100">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span>🎛️ 3-Band Equalizer</span>
+          <button id="resetEQ" class="btn btn-sm btn-outline-secondary">Reset</button>
+        </div>
+        <div class="card-body p-4">
+          
+          <div class="mb-4">
+            <div class="d-flex justify-content-between mb-2">
+              <label class="form-label mb-0"><i class="bi bi-music-note-beamed"></i> Bass</label>
+              <span id="bassLabel" class="badge bg-primary">0</span>
+            </div>
+            <input type="range" class="form-range" id="bassSlider" min="-12" max="12" step="1" value="0">
+            <div class="d-flex justify-content-between">
+              <small class="text-muted">-12</small>
+              <small class="text-muted">0</small>
+              <small class="text-muted">+12</small>
+            </div>
+          </div>
+
+          <div class="mb-4">
+            <div class="d-flex justify-content-between mb-2">
+              <label class="form-label mb-0"><i class="bi bi-soundwave"></i> Mid</label>
+              <span id="midLabel" class="badge bg-primary">0</span>
+            </div>
+            <input type="range" class="form-range" id="midSlider" min="-12" max="12" step="1" value="0">
+            <div class="d-flex justify-content-between">
+              <small class="text-muted">-12</small>
+              <small class="text-muted">0</small>
+              <small class="text-muted">+12</small>
+            </div>
+          </div>
+
+          <div class="mb-4">
+            <div class="d-flex justify-content-between mb-2">
+              <label class="form-label mb-0"><i class="bi bi-broadcast"></i> Treble</label>
+              <span id="trebleLabel" class="badge bg-primary">0</span>
+            </div>
+            <input type="range" class="form-range" id="trebleSlider" min="-12" max="12" step="1" value="0">
+            <div class="d-flex justify-content-between">
+              <small class="text-muted">-12</small>
+              <small class="text-muted">0</small>
+              <small class="text-muted">+12</small>
+            </div>
+          </div>
+
+          <div class="alert alert-light border small text-muted">
+            🎚️ Adjust the frequency bands to customize your audio experience. Changes are saved automatically.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-6">
+      <div class="card shadow-sm h-100">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span>🎵 Crossfade Settings</span>
+          <span id="crossfadeStatus" class="badge bg-secondary">Inactive</span>
+        </div>
+        <div class="card-body p-4">
+          
+          <div class="mb-4">
+            <div class="d-flex justify-content-between mb-2">
+              <label class="form-label mb-0"><i class="bi bi-arrow-left-right"></i> Crossfade Duration</label>
+              <span id="crossfadeLabel" class="badge bg-primary">2.0s</span>
+            </div>
+            <input type="range" class="form-range" id="crossfadeSlider" min="500" max="10000" step="500" value="2000">
+            <div class="d-flex justify-content-between">
+              <small class="text-muted">0.5s</small>
+              <small class="text-muted">2.0s</small>
+              <small class="text-muted">10s</small>
+            </div>
+          </div>
+
+          <div class="mb-4">
+            <label class="form-label text-muted small fw-bold">Crossfade Mode</label>
+            <div class="btn-group w-100" role="group">
+              <input type="radio" class="btn-check" name="crossfadeMode" id="modeOff" autocomplete="off" checked>
+              <label class="btn btn-outline-primary" for="modeOff">Off</label>
+              
+              <input type="radio" class="btn-check" name="crossfadeMode" id="modeAuto" autocomplete="off">
+              <label class="btn btn-outline-primary" for="modeAuto">Auto</label>
+              
+              <input type="radio" class="btn-check" name="crossfadeMode" id="modeManual" autocomplete="off">
+              <label class="btn btn-outline-primary" for="modeManual">Manual</label>
+            </div>
+          </div>
+
+          <div class="alert alert-light border small text-muted">
+            🎭 Crossfade creates smooth transitions between tracks. Auto mode applies to all track changes.
+          </div>
+
+          <div class="d-grid">
+            <button id="testCrossfade" class="btn btn-success" disabled>
+              Test Crossfade
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-4 mt-1">
+    
     <div class="col-lg-8">
       <div class="card shadow-sm h-100">
         <div class="card-header d-flex justify-content-between align-items-center bg-white">
@@ -269,6 +378,9 @@ async function refreshStatus(){
     badge.className = "badge bg-white text-primary";
     badge.textContent = "⏹ Stopped";
   }
+  
+  // Update EQ and Crossfade
+  updateEQAndCrossfade(s);
 }
 
 // --- File Manager ---
@@ -501,10 +613,165 @@ document.getElementById('uploadBtn').addEventListener('click', async () => {
   document.getElementById('uploadBtn').disabled = false;
 });
 
+// --- EQ Controls ---
+function initEQControls() {
+  const bassSlider = document.getElementById('bassSlider');
+  const midSlider = document.getElementById('midSlider');
+  const trebleSlider = document.getElementById('trebleSlider');
+  
+  // Update labels when sliders change
+  bassSlider.addEventListener('input', (e) => {
+    document.getElementById('bassLabel').textContent = e.target.value;
+    updateEQ();
+  });
+  
+  midSlider.addEventListener('input', (e) => {
+    document.getElementById('midLabel').textContent = e.target.value;
+    updateEQ();
+  });
+  
+  trebleSlider.addEventListener('input', (e) => {
+    document.getElementById('trebleLabel').textContent = e.target.value;
+    updateEQ();
+  });
+  
+  // Reset button
+  document.getElementById('resetEQ').addEventListener('click', () => {
+    bassSlider.value = 0;
+    midSlider.value = 0;
+    trebleSlider.value = 0;
+    document.getElementById('bassLabel').textContent = '0';
+    document.getElementById('midLabel').textContent = '0';
+    document.getElementById('trebleLabel').textContent = '0';
+    updateEQ();
+  });
+}
+
+async function updateEQ() {
+  const bass = document.getElementById('bassSlider').value;
+  const mid = document.getElementById('midSlider').value;
+  const treble = document.getElementById('trebleSlider').value;
+  
+  try {
+    const response = await fetch('/api/eq', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bass, mid, treble })
+    });
+    
+    if (!response.ok) {
+      console.error('Failed to update EQ settings');
+    }
+  } catch (error) {
+    console.error('Error updating EQ:', error);
+  }
+}
+
+// --- Crossfade Controls ---
+function initCrossfadeControls() {
+  const crossfadeSlider = document.getElementById('crossfadeSlider');
+  
+  crossfadeSlider.addEventListener('input', (e) => {
+    const value = parseInt(e.target.value);
+    document.getElementById('crossfadeLabel').textContent = (value / 1000).toFixed(1) + 's';
+    updateCrossfadeTime(value);
+  });
+  
+  // Mode buttons
+  document.querySelectorAll('input[name="crossfadeMode"]').forEach(radio => {
+    radio.addEventListener('change', (e) => {
+      const testBtn = document.getElementById('testCrossfade');
+      testBtn.disabled = e.target.id === 'modeOff';
+    });
+  });
+  
+  // Test button
+  document.getElementById('testCrossfade').addEventListener('click', testCrossfade);
+}
+
+async function updateCrossfadeTime(time) {
+  try {
+    const response = await fetch('/api/crossfade', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ time })
+    });
+    
+    if (!response.ok) {
+      console.error('Failed to update crossfade time');
+    }
+  } catch (error) {
+    console.error('Error updating crossfade:', error);
+  }
+}
+
+async function testCrossfade() {
+  // Get a random file for testing
+  const page = await fetch('/api/files?start=0&count=1');
+  if (!page.ok) return;
+  
+  const data = await page.json();
+  if (data.dhun && data.dhun.length > 0) {
+    const randomIndex = Math.floor(Math.random() * data.total);
+    const page2 = await fetch('/api/files?start=' + randomIndex + '&count=1');
+    if (page2.ok) {
+      const randomData = await page2.json();
+      if (randomData.dhun && randomData.dhun.length > 0) {
+        const path = randomData.dhun[0];
+        
+        try {
+          const response = await fetch('/api/crossfade', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path })
+          });
+          
+          if (response.ok) {
+            console.log('Crossfade test started');
+          }
+        } catch (error) {
+          console.error('Error testing crossfade:', error);
+        }
+      }
+    }
+  }
+}
+
+// --- Update EQ and Crossfade in Status ---
+function updateEQAndCrossfade(status) {
+  if (status.eq) {
+    document.getElementById('bassSlider').value = status.eq.bass;
+    document.getElementById('midSlider').value = status.eq.mid;
+    document.getElementById('trebleSlider').value = status.eq.treble;
+    document.getElementById('bassLabel').textContent = status.eq.bass;
+    document.getElementById('midLabel').textContent = status.eq.mid;
+    document.getElementById('trebleLabel').textContent = status.eq.treble;
+  }
+  
+  if (status.crossfade) {
+    document.getElementById('crossfadeSlider').value = status.crossfade.time;
+    document.getElementById('crossfadeLabel').textContent = (status.crossfade.time / 1000).toFixed(1) + 's';
+    
+    const statusBadge = document.getElementById('crossfadeStatus');
+    if (status.crossfade.active) {
+      statusBadge.className = 'badge bg-success';
+      statusBadge.textContent = 'Active';
+    } else {
+      statusBadge.className = 'badge bg-secondary';
+      statusBadge.textContent = 'Inactive';
+    }
+  }
+}
+
 // --- Init ---
 loadSettings();
 refreshStatus();
 refreshFiles();
+
+// Initialize EQ and Crossfade controls
+initEQControls();
+initCrossfadeControls();
+
 setInterval(refreshStatus, 2000);
 </script>
 </body>
@@ -648,7 +915,23 @@ void WebHandler::handleStatus() {
   if (!_server) return;
   bool running = (_audio ? _audio->isRunning() : false);
   int vol = (_audio ? _audio->getVolume() : DEFAULT_VOLUME);
-  String json = String("{\"volume\":") + vol + ",\"power\":" + (_powerState?"true":"false") + ",\"isPlaying\":" + (running?"true":"false") + ",\"nowPlaying\":\"\"}";
+  
+  // Get EQ settings
+  int bass = (_audio ? _audio->getBass() : 0);
+  int mid = (_audio ? _audio->getMid() : 0);
+  int treble = (_audio ? _audio->getTreble() : 0);
+  
+  // Get crossfade settings
+  int crossfadeTime = (_audio ? _audio->getCrossfadeTime() : 2000);
+  bool isCrossfading = (_audio ? _audio->isCrossfading() : false);
+  
+  String json = String("{\"volume\":") + vol + 
+                ",\"power\":" + (_powerState?"true":"false") + 
+                ",\"isPlaying\":" + (running?"true":"false") + 
+                ",\"nowPlaying\":\"\"" +
+                ",\"eq\":{\"bass\":" + bass + ",\"mid\":" + mid + ",\"treble\":" + treble + "}" +
+                ",\"crossfade\":{\"time\":" + crossfadeTime + ",\"active\":" + (isCrossfading?"true":"false") + "}" +
+                "}";
   _server->send(200, "application/json", json);
 }
 
@@ -836,5 +1119,94 @@ void WebHandler::handleChimeSettings() {
     _sm->setDNDEnabled(enabled);
     
     _server->send(200, "application/json", "{\"ok\":true}");
+  }
+}
+
+// Equalizer API handler
+void WebHandler::handleEQ() {
+  if (!_server || !_audio) {
+    _server->send(500, "application/json", "{\"error\":\"audio manager not available\"}");
+    return;
+  }
+  
+  if (_server->method() == HTTP_GET) {
+    // Return current EQ settings
+    String json = String("{\"bass\":") + _audio->getBass() + 
+                    ",\"mid\":" + _audio->getMid() + 
+                    ",\"treble\":" + _audio->getTreble() + "}";
+    _server->send(200, "application/json", json);
+  } else if (_server->method() == HTTP_POST) {
+    // Set EQ settings
+    String body = _server->arg("plain");
+    DynamicJsonDocument doc(512);
+    DeserializationError error = deserializeJson(doc, body);
+    
+    if (error) {
+      _server->send(400, "application/json", "{\"error\":\"invalid JSON\"}");
+      return;
+    }
+    
+    if (doc.containsKey("bass")) {
+      _audio->setBass(doc["bass"]);
+    }
+    if (doc.containsKey("mid")) {
+      _audio->setMid(doc["mid"]);
+    }
+    if (doc.containsKey("treble")) {
+      _audio->setTreble(doc["treble"]);
+    }
+    
+    String response = String("{\"ok\":true,\"bass\":") + _audio->getBass() + 
+                     ",\"mid\":" + _audio->getMid() + 
+                     ",\"treble\":" + _audio->getTreble() + "}";
+    _server->send(200, "application/json", response);
+  }
+}
+
+// Crossfade API handler
+void WebHandler::handleCrossfade() {
+  if (!_server || !_audio) {
+    _server->send(500, "application/json", "{\"error\":\"audio manager not available\"}");
+    return;
+  }
+  
+  if (_server->method() == HTTP_GET) {
+    // Return current crossfade settings
+    String json = String("{\"time\":") + _audio->getCrossfadeTime() + 
+                    ",\"active\":" + (_audio->isCrossfading() ? "true" : "false") + "}";
+    _server->send(200, "application/json", json);
+  } else if (_server->method() == HTTP_POST) {
+    // Set crossfade settings or trigger crossfade
+    String body = _server->arg("plain");
+    DynamicJsonDocument doc(512);
+    DeserializationError error = deserializeJson(doc, body);
+    
+    if (error) {
+      _server->send(400, "application/json", "{\"error\":\"invalid JSON\"}");
+      return;
+    }
+    
+    if (doc.containsKey("time")) {
+      int time = doc["time"];
+      if (time >= 500 && time <= 10000) { // 0.5s to 10s range
+        _audio->setCrossfadeTime(time);
+      }
+    }
+    
+    if (doc.containsKey("path")) {
+      // Trigger crossfade to new track
+      String path = doc["path"];
+      bool success = _audio->startWithCrossfade(path);
+      if (success) {
+        _server->send(200, "application/json", "{\"ok\":true,\"crossfading\":true}");
+      } else {
+        _server->send(400, "application/json", "{\"error\":\"crossfade failed\"}");
+      }
+    } else {
+      // Just update settings
+      String response = String("{\"ok\":true,\"time\":") + _audio->getCrossfadeTime() + 
+                       ",\"active\":" + (_audio->isCrossfading() ? "true" : "false") + "}";
+      _server->send(200, "application/json", response);
+    }
   }
 }

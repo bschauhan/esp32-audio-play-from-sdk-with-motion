@@ -68,6 +68,17 @@ public:
     }
 
     // ---------------------------
+    // GENERAL INTEGER SETTINGS
+    // ---------------------------
+    static void saveInt(const char* key, int value) {
+        prefs.putInt(key, value);
+    }
+
+    static int loadInt(const char* key, int defaultValue = 0) {
+        return prefs.getInt(key, defaultValue);
+    }
+
+    // ---------------------------
     // GENERAL SETTINGS FLAG
     // ---------------------------
     static bool isInitialized() {
