@@ -15,7 +15,6 @@ void WebHandler::begin(AudioManager *audio, FileScanner *fs, StateMachine *sm) {
   _fs = fs;
   _sm = sm;
 
-  // create the WebServer instance dynamically
   if (!_server) _server = new WebServer(80);
 
   WiFi.mode(WIFI_AP);
@@ -25,9 +24,29 @@ void WebHandler::begin(AudioManager *audio, FileScanner *fs, StateMachine *sm) {
   WiFi.softAPConfig(local_IP,gateway,subnet);
   WiFi.softAP("bharat","bharat@123");
 
-  // register handlers
-  _server->on("/", [this]() { this->handleRoot(); });
+  // --- Static File Handlers for Bootstrap ---
+  _server->on("/bootstrap.min.css", [this]() {
+    if (SD.exists("/system/bootstrap.min.css")) {
+      File f = SD.open("/system/bootstrap.min.css", "r");
+      _server->streamFile(f, "text/css");
+      f.close();
+    } else {
+      _server->send(404, "text/plain", "Bootstrap CSS not found");
+    }
+  });
 
+  _server->on("/bootstrap.min.js", [this]() {
+    if (SD.exists("/system/bootstrap.min.js")) {
+      File f = SD.open("/system/bootstrap.min.js", "r");
+      _server->streamFile(f, "application/javascript");
+      f.close();
+    } else {
+      _server->send(404, "text/plain", "Bootstrap JS not found");
+    }
+  });
+
+  // --- API Handlers ---
+  _server->on("/", [this]() { this->handleRoot(); });
   _server->on("/api/files", [this]() { this->handleFiles(); });
   _server->on("/api/play",  [this]() { this->handlePlay(); });
   _server->on("/api/volume",[this]() { this->handleVolume(); });
@@ -35,14 +54,11 @@ void WebHandler::begin(AudioManager *audio, FileScanner *fs, StateMachine *sm) {
   _server->on("/api/status",[this]() { this->handleStatus(); });
   _server->on("/api/chime-settings", HTTP_GET, [this]() { this->handleChimeSettings(); });
   _server->on("/api/chime-settings", HTTP_POST, [this]() { this->handleChimeSettings(); });
-
-  // delete endpoint (GET for simplicity)
   _server->on("/api/delete", [this]() { this->handleDelete(); });
 
-  // Upload: first arg = path, second lambda = final handler, third = upload stream handler
   _server->on("/upload", HTTP_POST,
-               [this]() { this->handleUploadPost(); },    // called after upload done
-               [this]() { this->handleUploadStream(); }   // called during upload chunks
+               [this]() { this->handleUploadPost(); },
+               [this]() { this->handleUploadStream(); }
   );
 
   _server->begin();
@@ -52,133 +68,212 @@ void WebHandler::handleClient() {
   if (_server) _server->handleClient();
 }
 
-// Serve the same dashboard root (unchanged except includes upload UI in the HTML)
-// (Assume you already have the big HTML — see next section for upload UI additions)
-// Serve a full dashboard UI (HTML + JS)
 void WebHandler::handleRoot() {
   if (!_server) return;
   String html = R"rawliteral(
 <!DOCTYPE html>
-<html>
+<html lang="en" data-bs-theme="light">
 <head>
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>ESP32 Audio Dashboard</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bharat Audio System</title>
+  <link href="/bootstrap.min.css" rel="stylesheet">
   <style>
-    body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }
-    .container { max-width: 800px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-    h1 { color: #333; margin-top: 0; }
-    .row { margin-bottom: 20px; padding: 15px; background: #f9f9f9; border-radius: 6px; }
-    .row label { display: block; font-weight: bold; margin-bottom: 8px; }
-    .list { max-height: 200px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; background: white; border-radius: 4px; }
-    button { padding: 8px 16px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; }
-    button:hover { background: #45a049; }
-    .file { display: flex; justify-content: space-between; padding: 8px; border-bottom: 1px solid #eee; }
-    .file:last-child { border-bottom: none; }
-    .file button { margin-left: 10px; padding: 4px 8px; font-size: 0.9em; }
-    .now { background: #e9f7ef !important; border-left: 4px solid #4CAF50; }
-    .upload-result { margin-top: 8px; padding: 8px; border-radius: 4px; }
-    .success { background: #e9f7ef; color: #2e7d32; }
-    .error { background: #ffebee; color: #c62828; }
-    .settings-panel { background: #f0f7fb; padding: 15px; border-radius: 6px; margin: 20px 0; }
-    .settings-row { display: flex; align-items: center; margin-bottom: 10px; }
-    .settings-row label { min-width: 150px; margin: 0 10px 0 0; }
-    input[type="number"] { padding: 5px; border: 1px solid #ddd; border-radius: 4px; }
-    .save-btn { background: #2196F3; }
-    .save-btn:hover { background: #0b7dda; }
+    body { background-color: #f0f2f5; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    .card { border: none; border-radius: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    .card-header { background-color: #fff; border-bottom: 1px solid #eee; padding: 15px 20px; font-weight: 600; color: #444; border-radius: 12px 12px 0 0 !important; }
     
-    /* Toggle Switch */
-    .switch { position: relative; display: inline-block; width: 60px; height: 34px; }
-    .switch input { opacity: 0; width: 0; height: 0; }
-    .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 34px; }
-    .slider:before { position: absolute; content: ""; height: 26px; width: 26px; left: 4px; bottom: 4px; background-color: white; transition: .4s; border-radius: 50%; }
-    input:checked + .slider { background-color: #2196F3; }
-    input:focus + .slider { box-shadow: 0 0 1px #2196F3; }
-    input:checked + .slider:before { transform: translateX(26px); }
-    .slider.round { border-radius: 34px; }
-    .slider.round:before { border-radius: 50%; }
+    /* Now Playing Card Specifics */
+    .now-playing-card { background: linear-gradient(135deg, #629cf3ff 0%, #5694f0ff 100%); color: white; }
+    .now-playing-card .card-header { background: rgba(255,255,255,0.1); border-bottom: 1px solid rgba(255,255,255,0.2); color: white; }
+    .volume-track { height: 6px; border-radius: 3px; }
+    
+    /* Scrollbar for playlist */
+    .playlist-container { max-height: 400px; overflow-y: auto; }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #f1f1f1; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e0; border-radius: 3px; }
   </style>
 </head>
 <body>
-  <h2>ESP32 Audio Dashboard</h2>
 
-  <div class="row">
-    <div class="controls">
-      <label style="margin:0 8px 0 0">Power</label>
-      <input id="power" type="checkbox">
-      <label style="margin-left:18px">Volume <span id="volLabel"></span></label>
-      <input id="vol" type="range" min="0" max="21" step="1" style="width:260px">
-    </div>
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark shadow-sm">
+  <div class="container">
+    <a class="navbar-brand fw-bold" href="#">
+      🔊 Bharat Audio
+    </a>
+    <span class="navbar-text text-white-50 small" id="clockDisplay">System Ready</span>
   </div>
+</nav>
 
-  <div class="row now">
-    <strong>Now Playing:</strong>
-    <div id="nowPlaying">—</div>
-    <small id="statusText"></small>
-  </div>
+<div class="container py-4">
+  
+  <div class="row g-4">
+    
+    <div class="col-lg-6">
+      <div class="card now-playing-card h-100 shadow-sm">
+        <div class="card-header d-flex justify-content-between align-items-center border-0">
+          <span>NOW PLAYING</span>
+          <span id="statusBadge" class="badge bg-white text-primary">Stopped</span>
+        </div>
+        <div class="card-body p-4 d-flex flex-column justify-content-between">
+          <div class="mb-4">
+            <div class="d-flex justify-content-between mb-2">
+              <label class="form-label mb-0"><i class="bi bi-volume-up"></i> Volume</label>
+              <span id="volLabel" class="fw-bold">10</span>
+            </div>
+            <input type="range" class="form-range" id="vol" min="0" max="21" step="1">
+          </div>
 
-  <div class="row">
-    <label>/dhun (random)</label>
-    <div class="list" id="dhunList">Loading…</div>
-    <div style="margin-top:8px">
-      <button id="refreshFiles">Refresh files</button>
-    </div>
-  </div>
-
-  <div class="settings-panel">
-    <h3>DND Settings</h3>
-    <div class="settings-row">
-      <label>Enable DND:</label>
-      <label class="switch">
-        <input type="checkbox" id="dndEnabled" checked>
-        <span class="slider round"></span>
-      </label>
-    </div>
-    <div id="dndSettings" style="margin-top: 15px;">
-      <div class="settings-row">
-        <label>Active Hours (0-23):</label>
-        <div>
-          <input type="number" id="activeStart" min="0" max="23" value="6" style="width: 60px;">
-          <span>to</span>
-          <input type="number" id="activeEnd" min="0" max="23" value="23" style="width: 60px;">
-          <span>hours</span>
+          <div class="bg-white bg-opacity-10 rounded p-3 d-flex justify-content-between align-items-center">
+            <span class="fw-bold"><i class="bi bi-power"></i> System Power</span>
+            <div class="form-check form-switch m-0">
+              <input class="form-check-input" type="checkbox" id="power" style="width: 3em; height: 1.5em; cursor: pointer;">
+            </div>
+          </div>
         </div>
       </div>
-      <div class="settings-row">
-        <label>Chime Window (seconds):</label>
-        <input type="number" id="chimeWindow" min="1" max="60" value="5" style="width: 60px;">
-      </div>
-      <div style="margin-top: 15px; font-size: 0.9em; color: #666;">
-        <p><strong>Note:</strong> System will be in DND mode outside active hours when DND is enabled.</p>
-        <p>Chime will only sound during active hours when DND is enabled.</p>
+    </div>
+
+    <div class="col-lg-6">
+      <div class="card h-100 shadow-sm">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span>🌙 DND & Automation</span>
+          <div class="form-check form-switch m-0">
+             <input class="form-check-input" type="checkbox" id="dndEnabled">
+          </div>
+        </div>
+        <div class="card-body p-4">
+          <div id="dndOverlay">
+            
+            <div class="row g-3 mb-4">
+              <div class="col-6">
+                <label class="form-label text-muted small fw-bold">Active Start (Hr)</label>
+                <input type="number" id="activeStart" class="form-control" min="0" max="23" placeholder="0-23">
+              </div>
+              <div class="col-6">
+                <label class="form-label text-muted small fw-bold">Active End (Hr)</label>
+                <input type="number" id="activeEnd" class="form-control" min="0" max="23" placeholder="0-23">
+              </div>
+            </div>
+            
+            <div class="mb-4">
+              <label class="form-label text-muted small fw-bold">Chime Duration</label>
+              <div class="input-group">
+                <input type="number" id="chimeWindow" class="form-control" min="1" max="60" value="5">
+                <span class="input-group-text bg-light text-muted">seconds</span>
+              </div>
+            </div>
+
+            <div class="alert alert-light border d-flex align-items-center small text-muted">
+              ℹ️ &nbsp; Audio will only play between start and end hours.
+            </div>
+          </div>
+          
+          <div class="d-grid mt-auto">
+            <button id="saveChimeSettings" class="btn btn-primary">
+              Save Configuration
+            </button>
+          </div>
+          <div id="saveToast" class="text-center mt-2 small fw-bold" style="min-height:20px"></div>
+        </div>
       </div>
     </div>
-    <button id="saveChimeSettings" class="save-btn" style="margin-top: 10px;">Save Settings</button>
-    <span id="saveStatus" style="margin-left: 12px;"></span>
   </div>
 
-  <div class="row">
-    <label>Upload MP3 to /dhun</label>
-    <input type="file" id="fileInput" accept=".mp3">
-    <button id="uploadBtn">Upload</button>
-    <div id="uploadResult" class="upload-result"></div>
+  <div class="row g-4 mt-1">
+    
+    <div class="col-lg-8">
+      <div class="card shadow-sm h-100">
+        <div class="card-header d-flex justify-content-between align-items-center bg-white">
+          <span>📂 Music Library <small class="text-muted ms-2">(/dhun)</small></span>
+          <button id="refreshFiles" class="btn btn-sm btn-outline-secondary">↻ Refresh</button>
+        </div>
+        
+        <div class="list-group list-group-flush playlist-container" id="dhunList">
+          <div class="text-center p-5 text-muted">Loading files...</div>
+        </div>
+        
+        <div class="card-footer bg-white text-center border-top-0 p-2">
+             <button id="loadMoreBtn" class="btn btn-sm btn-link text-decoration-none" style="display:none">Load More...</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-4">
+      <div class="card shadow-sm h-100">
+        <div class="card-header bg-success text-white">
+          <span>☁️ Upload MP3</span>
+        </div>
+        <div class="card-body p-4">
+          <div class="mb-3">
+            <label class="form-label text-muted small">Select File</label>
+            <input class="form-control" type="file" id="fileInput" accept=".mp3">
+          </div>
+          
+          <div class="d-grid gap-2">
+            <button id="uploadBtn" class="btn btn-success">
+              Upload to SD Card
+            </button>
+          </div>
+          
+          <div id="uploadResult" class="mt-3 text-center small fw-bold"></div>
+          
+          <hr class="my-4 text-muted">
+          <div class="text-muted small">
+            <strong>Note:</strong> Files are saved to <code>/dhun/</code>. Please use short filenames without special characters.
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
+</div>
+
+<script src="/bootstrap.min.js"></script>
 <script>
+// --- API Utilities ---
 async function apiGet(path){ const r = await fetch(path); if (!r.ok) return null; return r.json(); }
 async function apiAction(path){ await fetch(path); }
 
+// --- State Management ---
 async function refreshStatus(){
   const s = await apiGet('/api/status');
   if (!s) return;
-  document.getElementById('vol').value = s.volume;
+  
+  // Volume
+  const volSlider = document.getElementById('vol');
+  // Avoid jumpiness if user is dragging
+  if (document.activeElement !== volSlider) {
+    volSlider.value = s.volume;
+  }
   document.getElementById('volLabel').textContent = s.volume;
+  
+  // Power
   document.getElementById('power').checked = s.power;
-  document.getElementById('nowPlaying').textContent = s.nowPlaying || '—';
-  document.getElementById('statusText').textContent = s.isPlaying ? 'Playing' : 'Stopped';
+  
+  // Now Playing
+  const npTitle = document.getElementById('nowPlaying');
+  if(s.nowPlaying && s.nowPlaying.length > 0) {
+     npTitle.textContent = s.nowPlaying.replace('/dhun/', '');
+  } else {
+     npTitle.textContent = "Ready to Play";
+  }
+
+  // Badge
+  const badge = document.getElementById('statusBadge');
+  if(s.isPlaying) {
+    badge.className = "badge bg-warning text-dark animate-pulse";
+    badge.textContent = "▶ Playing";
+  } else {
+    badge.className = "badge bg-white text-primary";
+    badge.textContent = "⏹ Stopped";
+  }
 }
 
+// --- File Manager ---
 let dhunStart = 0;
-const dhunPageSize = 40; // adjust as needed
+const dhunPageSize = 40;
 
 async function fetchDhunPage(start) {
   const r = await fetch('/api/files?start=' + start + '&count=' + dhunPageSize);
@@ -187,56 +282,77 @@ async function fetchDhunPage(start) {
 }
 
 async function refreshFiles(reset=true) {
+  const list = document.getElementById('dhunList');
   if (reset) {
     dhunStart = 0;
-    document.getElementById('dhunList').innerHTML = '';
+    list.innerHTML = '';
   }
+  
   const page = await fetchDhunPage(dhunStart);
   if (!page) {
-    document.getElementById('dhunList').textContent = 'Error loading files';
+    list.innerHTML = '<div class="p-3 text-danger text-center">Error loading files</div>';
     return;
   }
-  (page.dhun || []).forEach(p=>{
-    const div = document.createElement('div'); div.className='file';
-    const name = document.createElement('div'); name.textContent = p.replace(/^\/dhun\//,'');
-    const btns = document.createElement('div');
-    const play = document.createElement('button'); play.textContent='Play'; play.onclick=()=>playPath(p);
-    const del = document.createElement('button'); del.textContent='Delete'; del.style.marginLeft='6px';
-    del.onclick = async () => {
-      if (!confirm('Delete ' + name.textContent + '?')) return;
+  
+  if(page.dhun.length === 0 && reset) {
+     list.innerHTML = '<div class="p-5 text-muted text-center">No MP3 files found.<br>Use the Upload panel to add music.</div>';
+     return;
+  }
+
+  (page.dhun || []).forEach(p => {
+    const name = p.replace(/^\/dhun\//,'');
+    
+    const item = document.createElement('div');
+    item.className = 'list-group-item list-group-item-action d-flex justify-content-between align-items-center py-3';
+    
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'text-truncate fw-medium';
+    nameSpan.style.maxWidth = '65%';
+    nameSpan.textContent = name;
+    
+    const btnGroup = document.createElement('div');
+    
+    const playBtn = document.createElement('button');
+    playBtn.className = 'btn btn-sm btn-primary rounded-circle me-2';
+    playBtn.style.width = '32px';
+    playBtn.style.height = '32px';
+    playBtn.innerHTML = '▶';
+    playBtn.onclick = () => playPath(p);
+    
+    const delBtn = document.createElement('button');
+    delBtn.className = 'btn btn-sm btn-outline-danger rounded-circle';
+    delBtn.style.width = '32px';
+    delBtn.style.height = '32px';
+    delBtn.innerHTML = '🗑';
+    delBtn.onclick = async (e) => {
+      e.stopPropagation(); // prevent triggering item click if we add one later
+      if (!confirm('Delete ' + name + '?')) return;
       const r = await fetch('/api/delete?path='+encodeURIComponent(p));
       if (r.ok) { refreshFiles(true); refreshStatus(); } else { alert('Delete failed'); }
     };
-    btns.appendChild(play); btns.appendChild(del);
-    div.appendChild(name); div.appendChild(btns);
-    document.getElementById('dhunList').appendChild(div);
+
+    btnGroup.appendChild(playBtn);
+    btnGroup.appendChild(delBtn);
+    
+    item.appendChild(nameSpan);
+    item.appendChild(btnGroup);
+    list.appendChild(item);
   });
 
-  // show load-more button or hide if done
   const total = page.total || 0;
-  const returned = page.count || 0;
-  dhunStart += returned;
-  let moreBtn = document.getElementById('loadMoreBtn');
-  if (!moreBtn) {
-    moreBtn = document.createElement('button');
-    moreBtn.id = 'loadMoreBtn';
-    moreBtn.textContent = 'Load more';
-    moreBtn.onclick = ()=> refreshFiles(false);
-    document.getElementById('dhunList').parentNode.appendChild(moreBtn);
-  }
-  if (dhunStart >= total) {
-    moreBtn.style.display = 'none';
-  } else {
-    moreBtn.style.display = 'inline-block';
-  }
+  dhunStart += (page.count || 0);
+  
+  const moreBtn = document.getElementById('loadMoreBtn');
+  moreBtn.style.display = (dhunStart >= total) ? 'none' : 'inline-block';
+  moreBtn.onclick = () => refreshFiles(false);
 }
 
 async function playPath(path){
   await apiAction('/api/play?path='+encodeURIComponent(path));
-  setTimeout(refreshStatus,200);
+  setTimeout(refreshStatus, 300);
 }
 
-// ---- Volume debounce + update ----
+// --- Volume Debounce ---
 function debounce(fn, wait){
   let t = null;
   return function(...args){
@@ -244,92 +360,65 @@ function debounce(fn, wait){
     t = setTimeout(()=>{ fn.apply(this, args); t = null; }, wait);
   }
 }
+const debouncedSend = debounce(async (v) => {
+    try { await fetch('/api/volume?level=' + encodeURIComponent(v)); } 
+    catch(e){}
+}, 150);
 
-// send volume to server (called by debounced handler)
-async function sendVolume(level){
-  try {
-    const res = await fetch('/api/volume?level=' + encodeURIComponent(level));
-    if (res.ok) {
-      const j = await res.json();
-      if (j && typeof j.volume !== 'undefined') {
-        document.getElementById('vol').value = j.volume;
-        document.getElementById('volLabel').textContent = j.volume;
-      }
-    } else {
-      console.warn('Volume API error', res.status);
-    }
-  } catch(e) {
-    console.warn('Volume send failed', e);
-  }
-}
-
-// Toggle DND settings visibility
-function toggleDNDSettings(enable) {
-  const dndSettings = document.getElementById('dndSettings');
-  if (enable) {
-    dndSettings.style.display = 'block';
-  } else {
-    dndSettings.style.display = 'none';
-  }
-}
-
-// Load chime and DND settings
-function loadSettings() {
-  // Load volume
-  fetch('/api/volume')
-    .then(r => r.json())
-    .then(data => {
-      document.getElementById('vol').value = data.volume || 0;
-      document.getElementById('volLabel').textContent = data.volume || 0;
-    });
-
-  // Load chime and DND settings
-  fetch('/api/chime-settings')
-    .then(r => r.json())
-    .then(settings => {
-      // Set DND enabled state
-      const dndEnabled = settings.enabled !== false; // Default to true if not set
-      document.getElementById('dndEnabled').checked = dndEnabled;
-      toggleDNDSettings(dndEnabled);
-      
-      // Set other settings if they exist
-      if (settings.startHour !== undefined) document.getElementById('activeStart').value = settings.startHour;
-      if (settings.endHour !== undefined) document.getElementById('activeEnd').value = settings.endHour;
-      if (settings.windowSec !== undefined) document.getElementById('chimeWindow').value = settings.windowSec;
-    });
-}
-
-// Toggle DND settings when checkbox changes
-document.getElementById('dndEnabled').addEventListener('change', function() {
-  toggleDNDSettings(this.checked);
-});
-
-// call sendVolume after 150ms of idle while sliding
-const debouncedSend = debounce((v)=> sendVolume(v), 150);
-
-// update label immediately on input, send after debounce
 document.getElementById('vol').addEventListener('input', (e)=>{
-  const v = e.target.value;
-  document.getElementById('volLabel').textContent = v;
-  debouncedSend(v);
+  document.getElementById('volLabel').textContent = e.target.value;
+  debouncedSend(e.target.value);
 });
 
-// keep the old change handler too (safety)
-document.getElementById('vol').addEventListener('change', async (e)=>{
-  await fetch('/api/volume?level=' + encodeURIComponent(e.target.value));
-  refreshStatus();
+// --- Settings Logic ---
+function toggleDNDVisuals(enable) {
+  const overlay = document.getElementById('dndOverlay');
+  const inputs = overlay.querySelectorAll('input');
+  
+  if (enable) {
+    overlay.style.opacity = '1';
+    overlay.style.pointerEvents = 'auto';
+    inputs.forEach(i => i.disabled = false);
+  } else {
+    overlay.style.opacity = '0.4';
+    overlay.style.pointerEvents = 'none';
+    inputs.forEach(i => i.disabled = true);
+  }
+}
+
+document.getElementById('dndEnabled').addEventListener('change', function() {
+  toggleDNDVisuals(this.checked);
 });
 
 document.getElementById('power').addEventListener('change', async (e)=>{
   await apiAction('/api/power?on='+(e.target.checked?1:0));
   refreshStatus();
 });
-document.getElementById('refreshFiles').addEventListener('click', refreshFiles);
 
-// Save chime and DND settings
+document.getElementById('refreshFiles').addEventListener('click', () => refreshFiles(true));
+
+// Load Initial Settings
+function loadSettings() {
+  fetch('/api/volume').then(r=>r.json()).then(d=>{
+     if(d.volume !== undefined) {
+        document.getElementById('vol').value = d.volume;
+        document.getElementById('volLabel').textContent = d.volume;
+     }
+  });
+
+  fetch('/api/chime-settings').then(r=>r.json()).then(s => {
+      const dndOn = s.enabled !== false;
+      document.getElementById('dndEnabled').checked = dndOn;
+      toggleDNDVisuals(dndOn);
+      if (s.startHour !== undefined) document.getElementById('activeStart').value = s.startHour;
+      if (s.endHour !== undefined) document.getElementById('activeEnd').value = s.endHour;
+      if (s.windowSec !== undefined) document.getElementById('chimeWindow').value = s.windowSec;
+  });
+}
+
 document.getElementById('saveChimeSettings').addEventListener('click', () => {
-  const saveBtn = document.getElementById('saveChimeSettings');
-  const statusEl = document.getElementById('saveStatus');
+  const btn = document.getElementById('saveChimeSettings');
+  const toast = document.getElementById('saveToast');
   const dndEnabled = document.getElementById('dndEnabled').checked;
   
   const settings = {
@@ -339,84 +428,84 @@ document.getElementById('saveChimeSettings').addEventListener('click', () => {
     windowSec: parseInt(document.getElementById('chimeWindow').value)
   };
 
-  // Validate inputs when DND is enabled
-  if (dndEnabled) {
-    if (isNaN(settings.startHour) || settings.startHour < 0 || settings.startHour > 23 ||
-        isNaN(settings.endHour) || settings.endHour < 0 || settings.endHour > 23 ||
-        isNaN(settings.windowSec) || settings.windowSec <= 0 || settings.windowSec > 60) {
-      statusEl.textContent = 'Invalid values. Please check your inputs.';
-      statusEl.style.color = 'red';
-      return;
-    }
-  }
-
-  // Disable button and show loading state
-  saveBtn.disabled = true;
-  statusEl.textContent = 'Saving...';
-  statusEl.style.color = '';
+  btn.disabled = true;
+  const originalText = btn.textContent;
+  btn.textContent = "Saving...";
 
   fetch('/api/chime-settings', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(settings)
   })
-  .then(r => {
-    if (!r.ok) {
-      throw new Error('Network response was not ok');
-    }
-    return r.json();
-  })
+  .then(r => r.json())
   .then(data => {
     if (data.ok) {
-      statusEl.textContent = 'Settings saved successfully!';
-      statusEl.style.color = 'green';
-      // Clear the success message after 3 seconds
-      setTimeout(() => {
-        statusEl.textContent = '';
-      }, 3000);
+      toast.textContent = "Settings Saved Successfully!";
+      toast.className = "text-center mt-2 small text-success fw-bold";
     } else {
-      throw new Error(data.message || 'Error saving settings');
+      toast.textContent = "Error: " + (data.message || "Unknown");
+      toast.className = "text-center mt-2 small text-danger fw-bold";
     }
   })
-  .catch(error => {
-    console.error('Error:', error);
-    statusEl.textContent = error.message || 'Error saving settings';
-    statusEl.style.color = 'red';
+  .catch(e => {
+     toast.textContent = "Network Error";
+     toast.className = "text-center mt-2 small text-danger fw-bold";
   })
   .finally(() => {
-    saveBtn.disabled = false;
+    btn.disabled = false;
+    btn.textContent = originalText;
+    setTimeout(() => { toast.textContent = ""; }, 3000);
   });
 });
 
-// upload logic
+// --- Upload Logic ---
 document.getElementById('uploadBtn').addEventListener('click', async () => {
   const fi = document.getElementById('fileInput');
-  const resultEl = document.getElementById('uploadResult');
-  if (!fi.files || fi.files.length === 0) { alert('Select a file'); return; }
+  const res = document.getElementById('uploadResult');
+  
+  if (!fi.files.length) { 
+     res.textContent = "Please select a file first."; 
+     res.className = "mt-3 text-center small fw-bold text-danger";
+     return; 
+  }
+  
   const file = fi.files[0];
-  if (!file.name.toLowerCase().endsWith('.mp3')) { alert('Only .mp3 allowed'); return; }
+  if (!file.name.toLowerCase().endsWith('.mp3')) { 
+     res.textContent = "Only .mp3 files are allowed."; 
+     res.className = "mt-3 text-center small fw-bold text-danger";
+     return; 
+  }
 
   const fd = new FormData();
   fd.append('file', file, file.name);
 
-  resultEl.textContent = 'Uploading…';
+  res.textContent = "Uploading... please wait.";
+  res.className = "mt-3 text-center small fw-bold text-primary";
+  document.getElementById('uploadBtn').disabled = true;
+
   try {
-    const res = await fetch('/upload', { method: 'POST', body: fd });
-    if (res.ok) {
-      resultEl.textContent = 'Upload OK';
-      setTimeout(()=>{ refreshFiles(); refreshStatus(); }, 600);
+    const r = await fetch('/upload', { method: 'POST', body: fd });
+    if (r.ok) {
+      res.textContent = "Upload Successful!";
+      res.className = "mt-3 text-center small fw-bold text-success";
+      fi.value = ''; // clear input
+      setTimeout(()=>{ refreshFiles(true); }, 1000);
     } else {
-      resultEl.textContent = 'Upload failed';
+      res.textContent = "Upload Failed.";
+      res.className = "mt-3 text-center small fw-bold text-danger";
     }
   } catch (e) {
-    resultEl.textContent = 'Upload error';
+    res.textContent = "Network Error.";
+    res.className = "mt-3 text-center small fw-bold text-danger";
   }
+  document.getElementById('uploadBtn').disabled = false;
 });
 
-// initial load
+// --- Init ---
+loadSettings();
 refreshStatus();
 refreshFiles();
-setInterval(refreshStatus,2000);
+setInterval(refreshStatus, 2000);
 </script>
 </body>
 </html>

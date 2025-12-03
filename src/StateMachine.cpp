@@ -226,6 +226,10 @@ void StateMachine::periodic() {
       _chimePhase = CH_BELLS;
       _lastChimeHour = hr; // prevent re-triggering within the hour
 
+      // Save current volume before starting chime
+      _savedVolume = _audio->getVolume();
+      Serial.printf("StateMachine: Saved volume %d for chime\n", _savedVolume);
+
       // Capture current playback to resume later
       _hadPreempt = false;
       _preemptPath = String();
@@ -280,12 +284,7 @@ void StateMachine::periodic() {
               _chimeBellRemaining--;
             }
             if (_chimeBellRemaining > 0) {
-              // Save current volume and set to max for chime
-              if (!_inChime) {
-                _savedVolume = _audio->getVolume();
-                _inChime = true;  // Mark that we're in chime mode
-                Serial.printf("StateMachine: Saved volume %d for chime\n", _savedVolume);
-              }
+              // Set to max volume for chime (volume already saved above)
               _audio->setVolume(21); // Max volume
               Serial.printf("StateMachine: CHIME bell remaining=%d\n", _chimeBellRemaining);
               bool ok = (_audio ? _audio->start(String(BELL_PATH)) : false);
