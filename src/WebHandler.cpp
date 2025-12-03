@@ -1,17 +1,19 @@
 #include "WebHandler.h"
+#include <ArduinoJson.h>
 #include "WiFi.h"
 #include "Config.h"
 #include "SD.h"
 #include "WebServer.h"
 
-WebHandler::WebHandler() : _server(nullptr), _audio(nullptr), _fs(nullptr) {}
+WebHandler::WebHandler() : _server(nullptr), _audio(nullptr), _fs(nullptr), _sm(nullptr) {}
 WebHandler::~WebHandler() {
   if (_server) { delete _server; _server = nullptr; }
 }
 
-void WebHandler::begin(AudioManager *am, FileScanner *fs) {
-  _audio = am;
+void WebHandler::begin(AudioManager *audio, FileScanner *fs, StateMachine *sm) {
+  _audio = audio;
   _fs = fs;
+  _sm = sm;
 
   // create the WebServer instance dynamically
   if (!_server) _server = new WebServer(80);
@@ -31,6 +33,8 @@ void WebHandler::begin(AudioManager *am, FileScanner *fs) {
   _server->on("/api/volume",[this]() { this->handleVolume(); });
   _server->on("/api/power", [this]() { this->handlePower(); });
   _server->on("/api/status",[this]() { this->handleStatus(); });
+  _server->on("/api/chime-settings", HTTP_GET, [this]() { this->handleChimeSettings(); });
+  _server->on("/api/chime-settings", HTTP_POST, [this]() { this->handleChimeSettings(); });
 
   // delete endpoint (GET for simplicity)
   _server->on("/api/delete", [this]() { this->handleDelete(); });
@@ -60,20 +64,38 @@ void WebHandler::handleRoot() {
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>ESP32 Audio Dashboard</title>
   <style>
-    body{font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial;margin:14px;max-width:900px}
-    h2{margin-bottom:6px}
-    .row{margin:12px 0}
-    label{display:block;font-weight:600;margin-bottom:6px}
-    input[type=range]{width:100%}
-    button{padding:8px 12px;border-radius:6px;border:1px solid #aaa;background:#f6f6f6;cursor:pointer}
-    .list{border:1px solid #ddd;padding:8px;border-radius:6px;max-height:220px;overflow:auto;background:#fff}
-    .file{display:flex;justify-content:space-between;align-items:center;padding:6px 4px;border-bottom:1px solid #eee}
-    .file:last-child{border-bottom:none}
-    .now{background:#f0f8ff;padding:8px;border-radius:6px}
-    small{color:#666}
-    .controls{display:flex;gap:8px;align-items:center}
-    .muted{opacity:0.6}
-    .upload-result{margin-top:6px;font-size:0.95em}
+    body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }
+    .container { max-width: 800px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    h1 { color: #333; margin-top: 0; }
+    .row { margin-bottom: 20px; padding: 15px; background: #f9f9f9; border-radius: 6px; }
+    .row label { display: block; font-weight: bold; margin-bottom: 8px; }
+    .list { max-height: 200px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; background: white; border-radius: 4px; }
+    button { padding: 8px 16px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; }
+    button:hover { background: #45a049; }
+    .file { display: flex; justify-content: space-between; padding: 8px; border-bottom: 1px solid #eee; }
+    .file:last-child { border-bottom: none; }
+    .file button { margin-left: 10px; padding: 4px 8px; font-size: 0.9em; }
+    .now { background: #e9f7ef !important; border-left: 4px solid #4CAF50; }
+    .upload-result { margin-top: 8px; padding: 8px; border-radius: 4px; }
+    .success { background: #e9f7ef; color: #2e7d32; }
+    .error { background: #ffebee; color: #c62828; }
+    .settings-panel { background: #f0f7fb; padding: 15px; border-radius: 6px; margin: 20px 0; }
+    .settings-row { display: flex; align-items: center; margin-bottom: 10px; }
+    .settings-row label { min-width: 150px; margin: 0 10px 0 0; }
+    input[type="number"] { padding: 5px; border: 1px solid #ddd; border-radius: 4px; }
+    .save-btn { background: #2196F3; }
+    .save-btn:hover { background: #0b7dda; }
+    
+    /* Toggle Switch */
+    .switch { position: relative; display: inline-block; width: 60px; height: 34px; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 34px; }
+    .slider:before { position: absolute; content: ""; height: 26px; width: 26px; left: 4px; bottom: 4px; background-color: white; transition: .4s; border-radius: 50%; }
+    input:checked + .slider { background-color: #2196F3; }
+    input:focus + .slider { box-shadow: 0 0 1px #2196F3; }
+    input:checked + .slider:before { transform: translateX(26px); }
+    .slider.round { border-radius: 34px; }
+    .slider.round:before { border-radius: 50%; }
   </style>
 </head>
 <body>
@@ -102,9 +124,36 @@ void WebHandler::handleRoot() {
     </div>
   </div>
 
-  <div class="row">
-    <label>/short</label>
-    <div class="list" id="shortList">Loading…</div>
+  <div class="settings-panel">
+    <h3>DND Settings</h3>
+    <div class="settings-row">
+      <label>Enable DND:</label>
+      <label class="switch">
+        <input type="checkbox" id="dndEnabled" checked>
+        <span class="slider round"></span>
+      </label>
+    </div>
+    <div id="dndSettings" style="margin-top: 15px;">
+      <div class="settings-row">
+        <label>Active Hours (0-23):</label>
+        <div>
+          <input type="number" id="activeStart" min="0" max="23" value="6" style="width: 60px;">
+          <span>to</span>
+          <input type="number" id="activeEnd" min="0" max="23" value="23" style="width: 60px;">
+          <span>hours</span>
+        </div>
+      </div>
+      <div class="settings-row">
+        <label>Chime Window (seconds):</label>
+        <input type="number" id="chimeWindow" min="1" max="60" value="5" style="width: 60px;">
+      </div>
+      <div style="margin-top: 15px; font-size: 0.9em; color: #666;">
+        <p><strong>Note:</strong> System will be in DND mode outside active hours when DND is enabled.</p>
+        <p>Chime will only sound during active hours when DND is enabled.</p>
+      </div>
+    </div>
+    <button id="saveChimeSettings" class="save-btn" style="margin-top: 10px;">Save Settings</button>
+    <span id="saveStatus" style="margin-left: 12px;"></span>
   </div>
 
   <div class="row">
@@ -214,6 +263,47 @@ async function sendVolume(level){
   }
 }
 
+// Toggle DND settings visibility
+function toggleDNDSettings(enable) {
+  const dndSettings = document.getElementById('dndSettings');
+  if (enable) {
+    dndSettings.style.display = 'block';
+  } else {
+    dndSettings.style.display = 'none';
+  }
+}
+
+// Load chime and DND settings
+function loadSettings() {
+  // Load volume
+  fetch('/api/volume')
+    .then(r => r.json())
+    .then(data => {
+      document.getElementById('vol').value = data.volume || 0;
+      document.getElementById('volLabel').textContent = data.volume || 0;
+    });
+
+  // Load chime and DND settings
+  fetch('/api/chime-settings')
+    .then(r => r.json())
+    .then(settings => {
+      // Set DND enabled state
+      const dndEnabled = settings.enabled !== false; // Default to true if not set
+      document.getElementById('dndEnabled').checked = dndEnabled;
+      toggleDNDSettings(dndEnabled);
+      
+      // Set other settings if they exist
+      if (settings.startHour !== undefined) document.getElementById('activeStart').value = settings.startHour;
+      if (settings.endHour !== undefined) document.getElementById('activeEnd').value = settings.endHour;
+      if (settings.windowSec !== undefined) document.getElementById('chimeWindow').value = settings.windowSec;
+    });
+}
+
+// Toggle DND settings when checkbox changes
+document.getElementById('dndEnabled').addEventListener('change', function() {
+  toggleDNDSettings(this.checked);
+});
+
 // call sendVolume after 150ms of idle while sliding
 const debouncedSend = debounce((v)=> sendVolume(v), 150);
 
@@ -235,6 +325,68 @@ document.getElementById('power').addEventListener('change', async (e)=>{
   refreshStatus();
 });
 document.getElementById('refreshFiles').addEventListener('click', refreshFiles);
+
+// Save chime and DND settings
+document.getElementById('saveChimeSettings').addEventListener('click', () => {
+  const saveBtn = document.getElementById('saveChimeSettings');
+  const statusEl = document.getElementById('saveStatus');
+  const dndEnabled = document.getElementById('dndEnabled').checked;
+  
+  const settings = {
+    enabled: dndEnabled,
+    startHour: parseInt(document.getElementById('activeStart').value),
+    endHour: parseInt(document.getElementById('activeEnd').value),
+    windowSec: parseInt(document.getElementById('chimeWindow').value)
+  };
+
+  // Validate inputs when DND is enabled
+  if (dndEnabled) {
+    if (isNaN(settings.startHour) || settings.startHour < 0 || settings.startHour > 23 ||
+        isNaN(settings.endHour) || settings.endHour < 0 || settings.endHour > 23 ||
+        isNaN(settings.windowSec) || settings.windowSec <= 0 || settings.windowSec > 60) {
+      statusEl.textContent = 'Invalid values. Please check your inputs.';
+      statusEl.style.color = 'red';
+      return;
+    }
+  }
+
+  // Disable button and show loading state
+  saveBtn.disabled = true;
+  statusEl.textContent = 'Saving...';
+  statusEl.style.color = '';
+
+  fetch('/api/chime-settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings)
+  })
+  .then(r => {
+    if (!r.ok) {
+      throw new Error('Network response was not ok');
+    }
+    return r.json();
+  })
+  .then(data => {
+    if (data.ok) {
+      statusEl.textContent = 'Settings saved successfully!';
+      statusEl.style.color = 'green';
+      // Clear the success message after 3 seconds
+      setTimeout(() => {
+        statusEl.textContent = '';
+      }, 3000);
+    } else {
+      throw new Error(data.message || 'Error saving settings');
+    }
+  })
+  .catch(error => {
+    console.error('Error:', error);
+    statusEl.textContent = error.message || 'Error saving settings';
+    statusEl.style.color = 'red';
+  })
+  .finally(() => {
+    saveBtn.disabled = false;
+  });
+});
 
 // upload logic
 document.getElementById('uploadBtn').addEventListener('click', async () => {
@@ -311,7 +463,6 @@ void WebHandler::handleFiles() {
   if (count < 1) count = 1;
   if (count > 200) count = 200; // sane upper bound
 
-  // Only /dhun now; if you later want short option add arg folder=dhun/short
   int total = (_fs ? _fs->getCount("/dhun") : 0);
 
   // compute slice
@@ -402,8 +553,8 @@ void WebHandler::handleDelete() {
   if (!_server) return;
   if (!_server->hasArg("path")) { _server->send(400, "application/json", "{\"error\":\"missing path\"}"); return; }
   String path = _server->arg("path");
-  // Basic validation: allow only under /dhun or /short or root mp3
-  if (!(path.startsWith("/dhun/") || path.startsWith("/short/") || path.startsWith("/"))) {
+  // Basic validation: allow only under /dhun or root mp3
+  if (!(path.startsWith("/dhun/") || path.startsWith("/"))) {
     _server->send(400, "application/json", "{\"error\":\"invalid path\"}");
     return;
   }
@@ -429,65 +580,157 @@ void WebHandler::handleDelete() {
 */
 void WebHandler::handleUploadStream() {
   if (!_server) return;
+
   HTTPUpload &upload = _server->upload();
-  static File uploadFile;
-  static String uploadedPath;
 
   if (upload.status == UPLOAD_FILE_START) {
     String filename = upload.filename;
-    Serial.print("Upload start: "); Serial.println(filename);
-    // sanitize filename: remove paths and allow only mp3
+    Serial.print("Upload start: ");
+    Serial.println(filename);
+
+    // Strip any path the browser sends (e.g. "C:\\foo\\bar.mp3")
     int slash = filename.lastIndexOf('/');
-    if (slash >= 0) filename = filename.substring(slash + 1);
-    // ensure extension is .mp3
-    if (!(filename.endsWith(".mp3") || filename.endsWith(".MP3"))) {
-      Serial.println("Upload rejected: not an mp3");
-      // not much we can do here except close - final handler will report
-      uploadedPath = "";
+    int bslash = filename.lastIndexOf('\\'); // Windows
+    int pos = max(slash, bslash);
+    if (pos >= 0) {
+      filename = filename.substring(pos + 1);
+    }
+
+    // Only accept .mp3
+    if (!filename.endsWith(".mp3") && !filename.endsWith(".MP3")) {
+      Serial.println("❌ Upload rejected: not an MP3");
+      _uploadPath = "";
       return;
     }
-    // build path: place in /dhun by default
-    uploadedPath = String("/dhun/") + filename;
-    // Avoid overwrite: if exists, append timestamp
-    if (SD.exists(uploadedPath)) {
+
+    // base path
+    _uploadPath = "/dhun/" + filename;
+
+    // Avoid overwrite
+    if (SD.exists(_uploadPath)) {
       String base = filename;
-      String nameOnly = base;
       int dot = base.lastIndexOf('.');
-      String ext = "";
-      if (dot >= 0) {
-        nameOnly = base.substring(0, dot);
-        ext = base.substring(dot);
-      }
-      uploadedPath = String("/dhun/") + nameOnly + "_" + String(millis()) + ext;
+      String nameOnly = (dot >= 0) ? base.substring(0, dot) : base;
+      String ext      = (dot >= 0) ? base.substring(dot)     : "";
+      _uploadPath = "/dhun/" + nameOnly + "_" + String(millis()) + ext;
     }
-    Serial.print("  saving to: "); Serial.println(uploadedPath);
-    uploadFile = SD.open(uploadedPath, FILE_WRITE);
-    if (!uploadFile) {
-      Serial.println("  ❌ Failed to open upload file for write");
+
+    Serial.print("  saving to: ");
+    Serial.println(_uploadPath);
+
+    _uploadFile = SD.open(_uploadPath, FILE_WRITE);
+    if (!_uploadFile) {
+      Serial.println("  ❌ Failed to open file for write");
+      _uploadPath = "";
     }
+
   } else if (upload.status == UPLOAD_FILE_WRITE) {
-    if (uploadFile) {
-      uploadFile.write(upload.buf, upload.currentSize);
+    // called with chunks
+    if (_uploadFile) {
+      _uploadFile.write(upload.buf, upload.currentSize);
     }
+
   } else if (upload.status == UPLOAD_FILE_END) {
-    if (uploadFile) {
-      uploadFile.close();
-      Serial.print("Upload finished -> "); Serial.println(uploadedPath);
-      // optionally tell FileScanner to rescan
-      // if (_fs) _fs->rescan();
+    if (_uploadFile) {
+      _uploadFile.close();
+      Serial.print("Upload finished -> ");
+      Serial.println(_uploadPath);
+
+      // update scanner so new file appears in /api/files
+      if (_fs) {
+        _fs->rescan();
+      }
     } else {
       Serial.println("Upload finished but file wasn't open");
+      _uploadPath = "";
     }
-    uploadedPath = "";
+  } else if (upload.status == UPLOAD_FILE_ABORTED) {
+    Serial.println("❌ Upload aborted");
+    if (_uploadFile) {
+      _uploadFile.close();
+    }
+    if (_uploadPath.length() && SD.exists(_uploadPath)) {
+      SD.remove(_uploadPath); // cleanup partial
+    }
+    _uploadPath = "";
   }
 }
 
 // Final upload handler (called once after upload completed)
 void WebHandler::handleUploadPost() {
   if (!_server) return;
-  // simple response (we can't know detailed success here beyond SD.exists)
-  // The upload stream handler already stored files on SD
-  // Send back results: success or not
-  // We will check if any file was recently created in /dhun by scanning timestamp - cheap approach:
-  _server->send(200, "application/json", "{\"ok\":true}");
+
+  // If we have a path and the file exists, assume success
+  if (_uploadPath.length() > 0 && SD.exists(_uploadPath)) {
+    _server->send(200, "application/json", "{\"ok\":true}");
+  } else {
+    _server->send(500, "application/json",
+                  "{\"ok\":false,\"error\":\"upload failed or no file\"}");
+  }
+
+  // reset state
+  _uploadPath = "";
+}
+
+void WebHandler::handleChimeSettings() {
+  if (!_server || !_sm) return;
+  
+  if (_server->method() == HTTP_GET) {
+    // Return current chime settings
+    String json = "{\"enabled\":";
+    json += _sm->isDNDEnabled() ? "true" : "false";
+    json += ",\"startHour\":";
+    json += _sm->getDNDStartHour();
+    json += ",\"endHour\":";
+    json += _sm->getDNDEndHour();
+    json += ",\"windowSec\":";
+    json += _sm->getChimeWindowSec();
+    json += "}";
+    _server->send(200, "application/json", json);
+  } 
+  else if (_server->method() == HTTP_POST) {
+    // Parse JSON body for POST requests
+    String body = _server->arg("plain");
+    DynamicJsonDocument doc(256);
+    DeserializationError error = deserializeJson(doc, body);
+    
+    if (error) {
+      _server->send(400, "application/json", "{\"ok\":false,\"message\":\"Invalid JSON\"}");
+      return;
+    }
+    
+    // Check if DND is enabled
+    bool enabled = true; // Default to enabled if not specified
+    if (doc.containsKey("enabled")) {
+      enabled = doc["enabled"];
+    }
+    
+    // Only validate and set time settings if DND is enabled
+    if (enabled) {
+      if (!doc.containsKey("startHour") || !doc.containsKey("endHour") || !doc.containsKey("windowSec")) {
+        _server->send(400, "application/json", "{\"ok\":false,\"message\":\"Missing required parameters\"}");
+        return;
+      }
+      
+      int startHour = doc["startHour"];
+      int endHour = doc["endHour"];
+      int windowSec = doc["windowSec"];
+      
+      // Validate input
+      if (startHour < 0 || startHour > 23 || 
+          endHour < 0 || endHour > 23 ||
+          windowSec <= 0 || windowSec > 60) {
+        _server->send(400, "application/json", "{\"ok\":false,\"message\":\"Invalid parameter values\"}");
+        return;
+      }
+      
+      _sm->setDNDHours(startHour, endHour);
+      _sm->setChimeWindowSec(windowSec);
+    }
+    
+    // Set DND enabled state
+    _sm->setDNDEnabled(enabled);
+    
+    _server->send(200, "application/json", "{\"ok\":true}");
+  }
 }

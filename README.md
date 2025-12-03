@@ -1,6 +1,6 @@
 # 🕉️ ESP32 Motion-Triggered MP3 Audio Playback
 
-This project uses an **ESP32**, **PIR motion sensor**, **SD card**, and a **MAX98357A I2S amplifier** to play MP3 audio files when motion is detected. It plays a greeting sound, followed by a random short audio clip and a random dhun from SD card folders.
+This project uses an **ESP32**, **PIR motion sensor**, **SD card**, and a **MAX98357A I2S amplifier** to play MP3 audio files when motion is detected. It plays a greeting sound followed by a random dhun from the SD card.
 
 ---
 
@@ -8,7 +8,7 @@ This project uses an **ESP32**, **PIR motion sensor**, **SD card**, and a **MAX9
 
 - 🏃‍♂️ Motion detection via PIR sensor
 - 🎵 Plays greeting: `/jay-swaminarayan.mp3`
-- 🔀 Random MP3 playback from `/short` and `/dhun` folders
+- 🔀 Random MP3 playback from `/dhun` folder
 - 🎧 I2S audio output via MAX98357A
 - ⏱️ Auto timeout after 5 seconds of inactivity
 - 🧪 Serial logs for debugging and monitoring

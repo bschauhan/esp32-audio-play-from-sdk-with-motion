@@ -3,6 +3,8 @@
 #include "AudioManager.h"
 #include "StateMachine.h"
 #include "WebHandler.h"
+#include "TimeSync.h"
+#include <WiFi.h>
 
 
 AudioManager audioManager;
@@ -12,36 +14,50 @@ WebHandler webHandler;
 
 void setup() {
     Serial.begin(115200);
+    delay(1000);
     pinMode(PIR_PIN, INPUT);
 
-    Serial.println("\n🚀 ESP32 Audio - Multi-file build\n");
+    // Initialize WiFi
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    
+    // Don't wait for WiFi to connect - we'll check it in the loop
+    Serial.println("Connecting to WiFi...");
 
     // init SD
     SPI.begin(SD_SCK, SD_MISO, SD_MOSI);
     if (!SD.begin(SD_CS)) {
-        Serial.println("❌ SD begin failed - halting");
         while (true) delay(1000);
     }
 
     // scan files
     fileScanner.begin(SD);
-    // fileScanner.scanFolder("/short");
     fileScanner.scanFolder("/dhun");
 
     // init audio
     audioManager.begin(I2S_BCLK, I2S_LRCLK, I2S_DIN);
-    audioManager.setVolume(DEFAULT_VOLUME);
+    // audioManager.setVolume(DEFAULT_VOLUME);
 
-    // init web
-    webHandler.begin(&audioManager, &fileScanner);
-
-    // init state machine
+    // init state machine first
     stateMachine.begin(&audioManager, &fileScanner);
+    
+    // init web (pass state machine for chime testing)
+    webHandler.begin(&audioManager, &fileScanner, &stateMachine);
 
-    Serial.println("✅ System Ready");
 }
 
 void loop() {
+    // Try to sync time if WiFi is connected
+    static bool timeSynced = false;
+    if (WiFi.status() == WL_CONNECTED) {
+        if (!timeSynced) {
+            if (TimeSync::syncIfNeeded(stateMachine.getRtc())) {
+                timeSynced = true;
+                Serial.println("Time synchronized with NTP server");
+            }
+        }
+    }
+
     // Keep audio.loop() as fast as possible
     audioManager.loop();
 
