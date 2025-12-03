@@ -593,6 +593,13 @@ void WebHandler::handleFiles() {
 void WebHandler::handlePlay() {
   if (!_server) return;
   if (!_server->hasArg("path")) { _server->send(400, "application/json", "{\"error\":\"missing path\"}"); return; }
+  
+  // Check if power is on
+  if (!_powerState) {
+    _server->send(403, "application/json", "{\"error\":\"system power is off\"}");
+    return;
+  }
+  
   String path = _server->arg("path");
   if (!SD.exists(path)) {
     _server->send(404, "application/json", "{\"error\":\"file not found\"}");
@@ -625,7 +632,15 @@ void WebHandler::handlePower() {
   if (!_server) return;
   if (!_server->hasArg("on")) { _server->send(400, "application/json", "{\"error\":\"missing on\"}"); return; }
   bool on = (_server->arg("on") == "1");
-  if (!on && _audio) _audio->stop();
+  
+  // Store the power state
+  _powerState = on;
+  
+  // Stop audio if power is turned off
+  if (!on && _audio) {
+    _audio->stop();
+  }
+  
   _server->send(200, "application/json", String("{\"ok\":true,\"power\":") + (on?"true":"false") + "}");
 }
 
@@ -633,7 +648,7 @@ void WebHandler::handleStatus() {
   if (!_server) return;
   bool running = (_audio ? _audio->isRunning() : false);
   int vol = (_audio ? _audio->getVolume() : DEFAULT_VOLUME);
-  String json = String("{\"volume\":") + vol + ",\"power\":true,\"isPlaying\":" + (running?"true":"false") + ",\"nowPlaying\":\"\"}";
+  String json = String("{\"volume\":") + vol + ",\"power\":" + (_powerState?"true":"false") + ",\"isPlaying\":" + (running?"true":"false") + ",\"nowPlaying\":\"\"}";
   _server->send(200, "application/json", json);
 }
 

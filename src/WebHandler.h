@@ -29,6 +29,9 @@ private:
   // Upload state (used by handleUploadStream/handleUploadPost)
   File   _uploadFile;   // current upload file on SD
   String _uploadPath;   // final path like "/dhun/file.mp3"
+  
+  // Power state
+  bool _powerState = true;
 
   // HTTP handlers
   void handleRoot();        // serve main dashboard HTML
