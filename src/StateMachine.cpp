@@ -212,14 +212,17 @@ void StateMachine::periodic() {
   DateTime dt;
   if (_rtc.now(dt)) {
     int hr = dt.hour();
+    int min = dt.minute();
     int sec = dt.second();
-    // window at top of hour
-    bool inWindow = (sec >= 0 && sec <= CHIME_WINDOW_SEC);
+    // window at end of hour (e.g., 59:55-59:59 to announce the ending hour)
+    bool inWindow = (min == 59 && sec >= (60 - CHIME_WINDOW_SEC));
     bool inRange = (hr >= CHIME_START_HOUR && hr <= CHIME_END_HOUR);
     Serial.printf("StateMachine: Checking chime conditions - hour=%d, sec=%d, inWindow=%d, inRange=%d, inChime=%d, lastChimeHour=%d\n",
                   hr, sec, inWindow ? 1 : 0, inRange ? 1 : 0, _inChime ? 1 : 0, _lastChimeHour);
     if (inRange && inWindow && !_inChime && (_lastChimeHour != hr)) {
-      int h12 = hr % 12; if (h12 == 0) h12 = 12;
+      // Since we trigger at end of hour (e.g., 11:59), announce the NEXT hour (12)
+      int nextHr = (hr + 1) % 24;
+      int h12 = nextHr % 12; if (h12 == 0) h12 = 12;
       _inChime = true;
       _chimeHourNumber = h12;
       _chimeBellRemaining = h12;
