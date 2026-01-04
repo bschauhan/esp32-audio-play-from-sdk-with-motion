@@ -1,9 +1,7 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-
 #include <Arduino.h>
-
 
 // Pins
 // I2S Audio
@@ -20,14 +18,18 @@
 // Motion Sensor
 #define PIR_PIN 26
 
-// RTC (DS3231)
-#define RTC_I2C_ADDR 0x68  // Default I2C address for DS3231
-#define I2C_SDA 21         // Default SDA pin for ESP32
-#define I2C_SCL 22         // Default SCL pin for ESP32
+// Relay for Light Control (active-HIGH module)
+#define RELAY_PIN 4   // GPIO pin for relay control
+#define RELAY_ON HIGH // Active-HIGH: HIGH = Relay ON (bulb ON)
+#define RELAY_OFF LOW // Active-HIGH: LOW = Relay OFF (bulb OFF)
 
+// RTC (DS3231)
+#define RTC_I2C_ADDR 0x68 // Default I2C address for DS3231
+#define I2C_SDA 21        // Default SDA pin for ESP32
+#define I2C_SCL 22        // Default SCL pin for ESP32
 
 // RTC Configuration
-#define RTC_UPDATE_INTERVAL_MS 1000  // How often to check RTC (ms)
+#define RTC_UPDATE_INTERVAL_MS 1000 // How often to check RTC (ms)
 
 // Behavior
 #define DEFAULT_VOLUME 11
@@ -35,18 +37,18 @@
 #define STATE_CHECK_INTERVAL_MS 120
 
 // Hourly chime config
-#define CHIME_START_HOUR 6      // inclusive, 24h format
-#define CHIME_END_HOUR   23     // inclusive, 24h format
-#define CHIME_WINDOW_SEC 5      // trigger window at top of hour (seconds)
+#define CHIME_START_HOUR 6 // inclusive, 24h format
+#define CHIME_END_HOUR 23  // inclusive, 24h format
+#define CHIME_WINDOW_SEC 5 // trigger window at top of hour (seconds)
 
 // Audio file paths (must exist on SD)
 #define GREETING_PATH "/jay-swaminarayan.mp3"
-#define BELL_PATH     "/digital_clock/bell.mp3"
-#define HOURS_DIR     "/digital_clock/hours/"
+#define BELL_PATH "/digital_clock/bell.mp3"
+#define HOURS_DIR "/digital_clock/hours/"
 
 // WiFi Configuration
-#define WIFI_SSID       "error"      // Replace with your WiFi network name
-#define WIFI_PASSWORD   "bharat@123"  // Replace with your WiFi password
-#define WIFI_TIMEOUT_MS 20000                 // 20 seconds timeout for WiFi connection
+#define WIFI_SSID "error"          // Replace with your WiFi network name
+#define WIFI_PASSWORD "bharat@123" // Replace with your WiFi password
+#define WIFI_TIMEOUT_MS 20000      // 20 seconds timeout for WiFi connection
 
 #endif // CONFIG_H

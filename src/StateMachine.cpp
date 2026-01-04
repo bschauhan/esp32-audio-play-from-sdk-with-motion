@@ -2,22 +2,37 @@
 #include "Config.h"
 #include "Settings.h"
 
+// Relay control methods
+void StateMachine::setRelayOn() {
+  digitalWrite(RELAY_PIN, RELAY_ON); // Active-HIGH: HIGH energizes relay
+  Serial.println(">> LIGHT ON (Bulb should turn ON)");
+  Serial.println("   CHECK: RED LED should be ON (relay energized)");
+  Serial.println("   CHECK: Relay should click");
+}
+
+void StateMachine::setRelayOff() {
+  digitalWrite(RELAY_PIN, RELAY_OFF); // Active-HIGH: LOW de-energizes relay
+  Serial.println(">> LIGHT OFF (Bulb should turn OFF)");
+  Serial.println("   CHECK: RED LED should be OFF (relay idle)");
+  Serial.println("   CHECK: Relay should click");
+}
+
 bool StateMachine::isDNDTime() {
   if (!_dndEnabled) {
     return false; // DND is disabled
   }
-  
+
   DateTime now;
   if (!_rtc.now(now)) {
     return false; // If we can't get the time, don't block audio
   }
-  
+
   int currentHour = now.hour();
-  
+
   // Handle overnight DND (e.g., 10 PM to 6 AM)
   if (_dndStartHour > _dndEndHour) {
     return (currentHour >= _dndStartHour || currentHour < _dndEndHour);
-  } 
+  }
   // Handle same-day DND (e.g., 11 PM to 1 AM)
   else {
     return (currentHour >= _dndStartHour && currentHour < _dndEndHour);
@@ -33,7 +48,7 @@ bool StateMachine::startChime() {
       _hadPreempt = true;
     }
   }
-  
+
   // Start the first bell
   bool ok = (_audio ? _audio->start(String(BELL_PATH)) : false);
   if (ok) {
@@ -43,7 +58,7 @@ bool StateMachine::startChime() {
   } else {
     _inChime = false;
     _chimePhase = CH_NONE;
-    
+
     // Try to resume preempted audio if any
     if (_hadPreempt && _audio) {
       if (_audio->start(_preemptPath)) {
@@ -70,10 +85,10 @@ void StateMachine::begin(AudioManager *am, FileScanner *fs) {
   _state = IDLE;
   _lastTriggerAttempt = 0;
   _lastMotion = 0;
-  
+
   // Initialize Settings
   Settings::begin();
-  
+
   // Load DND settings if they exist
   if (Settings::isInitialized()) {
     auto settings = Settings::loadDNDSettings();
@@ -81,10 +96,11 @@ void StateMachine::begin(AudioManager *am, FileScanner *fs) {
     _dndStartHour = settings.startHour;
     _dndEndHour = settings.endHour;
     _chimeWindowSec = settings.windowSec;
-    
+
     Serial.println("Loaded DND settings from storage:");
     Serial.printf("  DND Enabled: %s\n", _dndEnabled ? "Yes" : "No");
-    Serial.printf("  DND Hours: %02d:00 - %02d:00\n", _dndStartHour, _dndEndHour);
+    Serial.printf("  DND Hours: %02d:00 - %02d:00\n", _dndStartHour,
+                  _dndEndHour);
     Serial.printf("  Chime Window: %d seconds\n", _chimeWindowSec);
   } else {
     // Save default settings
@@ -94,24 +110,26 @@ void StateMachine::begin(AudioManager *am, FileScanner *fs) {
     defaultSettings.endHour = _dndEndHour;
     defaultSettings.windowSec = _chimeWindowSec;
     Settings::saveDNDSettings(defaultSettings);
-    
+
     Serial.println("Initialized with default DND settings");
   }
-  
+
   // Initialize RTC with better error handling
   if (!_rtc.begin()) {
     Serial.println("ERROR: Couldn't find RTC");
     Serial.println("Please check the following:");
     Serial.println("1. Is the RTC module (DS3231) properly connected?");
-    Serial.printf("2. Are the I2C pins correct? SDA=%d, SCL=%d\n", I2C_SDA, I2C_SCL);
-    Serial.printf("3. Is the I2C address correct? 0x%02X (Default: 0x68)\n", RTC_I2C_ADDR);
+    Serial.printf("2. Are the I2C pins correct? SDA=%d, SCL=%d\n", I2C_SDA,
+                  I2C_SCL);
+    Serial.printf("3. Is the I2C address correct? 0x%02X (Default: 0x68)\n",
+                  RTC_I2C_ADDR);
   } else {
     // Check RTC time
     DateTime now;
     if (_rtc.now(now)) {
-      Serial.printf("RTC time: %02d:%02d:%02d %02d/%02d/%04d\n", 
-                   now.hour(), now.minute(), now.second(),
-                   now.day(), now.month(), now.year());
+      Serial.printf("RTC time: %02d:%02d:%02d %02d/%02d/%04d\n", now.hour(),
+                    now.minute(), now.second(), now.day(), now.month(),
+                    now.year());
     } else {
       Serial.println("WARNING: Could not read time from RTC");
       Serial.println("The RTC might have lost power and needs to be set");
@@ -123,7 +141,8 @@ void StateMachine::motionSample(bool motionHigh) {
   unsigned long now = millis();
 
   // update last motion time
-  if (motionHigh) _lastMotion = now;
+  if (motionHigh)
+    _lastMotion = now;
 
   // if already playing, just update lastMotion and return
   if (_isPlaying) {
@@ -155,7 +174,7 @@ void StateMachine::startGreeting() {
     _isPlaying = false;
     return;
   }
-  
+
   if (_audio && _audio->start(String("/jay-swaminarayan.mp3"))) {
     _state = GREETING;
     _isPlaying = true;
@@ -171,7 +190,7 @@ void StateMachine::startDhunSession() {
     _isPlaying = false;
     return;
   }
-  
+
   _state = DHUN;
   _dhunSessionStart = millis();
   // start first dhun
@@ -183,19 +202,22 @@ void StateMachine::startDhunSession() {
     _lastTriggerAttempt = 0;
   } else {
     _isPlaying = true;
+    setRelayOn(); // Turn on light when dhun starts
   }
 }
 
 bool StateMachine::startRandomDhun() {
-  if (isDNDTime() || !_fs) return false;
-  
+  if (isDNDTime() || !_fs)
+    return false;
+
   int count = _fs->getCount("/dhun");
-  if (count <= 0) return false;
-  
+  if (count <= 0)
+    return false;
+
   // pick random file
   int idx = random(count);
   String path = _fs->getPath("/dhun", idx);
-  
+
   if (_audio && _audio->start(path)) {
     _isPlaying = true;
     return true;
@@ -205,7 +227,8 @@ bool StateMachine::startRandomDhun() {
 
 void StateMachine::periodic() {
   unsigned long now = millis();
-  if (now - _lastCheck < STATE_CHECK_INTERVAL_MS) return;
+  if (now - _lastCheck < STATE_CHECK_INTERVAL_MS)
+    return;
   _lastCheck = now;
 
   // Hourly chime scheduler (uses DS3231 via RtcClock)
@@ -217,12 +240,17 @@ void StateMachine::periodic() {
     // window at end of hour (e.g., 59:55-59:59 to announce the ending hour)
     bool inWindow = (min == 59 && sec >= (60 - CHIME_WINDOW_SEC));
     bool inRange = (hr >= CHIME_START_HOUR && hr <= CHIME_END_HOUR);
-    Serial.printf("StateMachine: Checking chime conditions - hour=%d, sec=%d, inWindow=%d, inRange=%d, inChime=%d, lastChimeHour=%d\n",
-                  hr, sec, inWindow ? 1 : 0, inRange ? 1 : 0, _inChime ? 1 : 0, _lastChimeHour);
+    Serial.printf("StateMachine: Checking chime conditions - hour=%d, sec=%d, "
+                  "inWindow=%d, inRange=%d, inChime=%d, lastChimeHour=%d\n",
+                  hr, sec, inWindow ? 1 : 0, inRange ? 1 : 0, _inChime ? 1 : 0,
+                  _lastChimeHour);
     if (inRange && inWindow && !_inChime && (_lastChimeHour != hr)) {
-      // Since we trigger at end of hour (e.g., 11:59), announce the NEXT hour (12)
+      // Since we trigger at end of hour (e.g., 11:59), announce the NEXT hour
+      // (12)
       int nextHr = (hr + 1) % 24;
-      int h12 = nextHr % 12; if (h12 == 0) h12 = 12;
+      int h12 = nextHr % 12;
+      if (h12 == 0)
+        h12 = 12;
       _inChime = true;
       _chimeHourNumber = h12;
       _chimeBellRemaining = h12;
@@ -242,21 +270,24 @@ void StateMachine::periodic() {
         if (cur.length() > 0) {
           _preemptPath = cur;
           _hadPreempt = true;
-          Serial.printf("StateMachine: preempting '%s' (state=%d) for chime\n", _preemptPath.c_str(), (int)_preemptState);
+          Serial.printf("StateMachine: preempting '%s' (state=%d) for chime\n",
+                        _preemptPath.c_str(), (int)_preemptState);
         }
       }
 
       bool ok = (_audio ? _audio->start(String(BELL_PATH)) : false);
       Serial.printf("StateMachine: start bell.mp3 returned %d\n", ok ? 1 : 0);
       if (ok) {
-        _state = GREETING;   // reuse GREETING state for chime sequence management
+        _state = GREETING; // reuse GREETING state for chime sequence management
         _isPlaying = true;
       } else {
-        Serial.println("StateMachine: Failed to start bell.mp3, aborting chime");
+        Serial.println(
+            "StateMachine: Failed to start bell.mp3, aborting chime");
         _inChime = false;
         _chimePhase = CH_NONE;
         if (_hadPreempt && _audio) {
-          Serial.println("StateMachine: chime start failed -> resuming preempted track");
+          Serial.println(
+              "StateMachine: chime start failed -> resuming preempted track");
           if (_audio->start(_preemptPath)) {
             _state = _preemptState;
             _isPlaying = true;
@@ -289,37 +320,48 @@ void StateMachine::periodic() {
             if (_chimeBellRemaining > 0) {
               // Set to max volume for chime (volume already saved above)
               _audio->setVolume(21); // Max volume
-              Serial.printf("StateMachine: CHIME bell remaining=%d\n", _chimeBellRemaining);
+              Serial.printf("StateMachine: CHIME bell remaining=%d\n",
+                            _chimeBellRemaining);
               bool ok = (_audio ? _audio->start(String(BELL_PATH)) : false);
-              Serial.printf("StateMachine: start bell.mp3 returned %d\n", ok ? 1 : 0);
+              Serial.printf("StateMachine: start bell.mp3 returned %d\n",
+                            ok ? 1 : 0);
               if (ok) {
                 _isPlaying = true;
               } else {
-                Serial.println("StateMachine: Failed to start bell.mp3, aborting chime");
+                Serial.println(
+                    "StateMachine: Failed to start bell.mp3, aborting chime");
                 _inChime = false;
                 _chimePhase = CH_NONE;
-                _audio->setVolume(_savedVolume);  // Restore volume on error
-                Serial.printf("StateMachine: Restored volume to %d after bell error\n", _savedVolume);
+                _audio->setVolume(_savedVolume); // Restore volume on error
+                Serial.printf(
+                    "StateMachine: Restored volume to %d after bell error\n",
+                    _savedVolume);
                 _state = IDLE;
                 _isPlaying = false;
               }
             } else {
               _chimePhase = CH_NUMBER;
               char numFile[48];
-              snprintf(numFile, sizeof(numFile), "%s%d.mp3", HOURS_DIR, _chimeHourNumber);
+              snprintf(numFile, sizeof(numFile), "%s%d.mp3", HOURS_DIR,
+                       _chimeHourNumber);
               Serial.printf("StateMachine: CHIME number -> %s\n", numFile);
               bool ok = (_audio ? _audio->start(String(numFile)) : false);
-              Serial.printf("StateMachine: start number file returned %d\n", ok ? 1 : 0);
+              Serial.printf("StateMachine: start number file returned %d\n",
+                            ok ? 1 : 0);
               if (ok) {
                 _isPlaying = true;
               } else {
-                Serial.println("StateMachine: Failed to start number file, aborting chime");
+                Serial.println("StateMachine: Failed to start number file, "
+                               "aborting chime");
                 _inChime = false;
                 _chimePhase = CH_NONE;
-                _audio->setVolume(_savedVolume);  // Restore volume on error
-                Serial.printf("StateMachine: Restored volume to %d after number error\n", _savedVolume);
+                _audio->setVolume(_savedVolume); // Restore volume on error
+                Serial.printf(
+                    "StateMachine: Restored volume to %d after number error\n",
+                    _savedVolume);
                 if (_hadPreempt && _audio) {
-                  Serial.println("StateMachine: number play failed -> resuming preempted track");
+                  Serial.println("StateMachine: number play failed -> resuming "
+                                 "preempted track");
                   if (_audio->start(_preemptPath)) {
                     _state = _preemptState;
                     _isPlaying = true;
@@ -338,29 +380,34 @@ void StateMachine::periodic() {
           } else if (_chimePhase == CH_NUMBER) {
             static int playCount = 0;
             playCount++;
-            
-            if (playCount <= 2) {  // Play the hour number twice
+
+            if (playCount <= 2) { // Play the hour number twice
               char numFile[48];
-              snprintf(numFile, sizeof(numFile), "%s%d.mp3", HOURS_DIR, _chimeHourNumber);
-              Serial.printf("StateMachine: CHIME playing number %d/2 -> %s\n", playCount, numFile);
+              snprintf(numFile, sizeof(numFile), "%s%d.mp3", HOURS_DIR,
+                       _chimeHourNumber);
+              Serial.printf("StateMachine: CHIME playing number %d/2 -> %s\n",
+                            playCount, numFile);
               if (_audio->start(String(numFile))) {
                 _isPlaying = true;
                 return; // Exit and wait for this to finish
               }
             }
-            
+
             // If we get here, both plays are done or failed
             if (playCount >= 2) {
-              Serial.println("StateMachine: CHIME number finished twice, ending chime");
-              playCount = 0;  // Reset for next time
+              Serial.println(
+                  "StateMachine: CHIME number finished twice, ending chime");
+              playCount = 0; // Reset for next time
               _inChime = false;
               _chimePhase = CH_NONE;
               // Restore original volume
               _audio->setVolume(_savedVolume);
-              Serial.printf("StateMachine: Restored volume to %d after chime\n", _savedVolume);
+              Serial.printf("StateMachine: Restored volume to %d after chime\n",
+                            _savedVolume);
             }
             if (_hadPreempt && _audio) {
-              Serial.println("StateMachine: chime complete -> resuming preempted track");
+              Serial.println(
+                  "StateMachine: chime complete -> resuming preempted track");
               if (_audio->start(_preemptPath)) {
                 _state = _preemptState;
                 _isPlaying = true;
@@ -378,9 +425,10 @@ void StateMachine::periodic() {
             Serial.println("StateMachine: CHIME unknown phase, aborting");
             _inChime = false;
             _chimePhase = CH_NONE;
-            _audio->setVolume(_savedVolume);  // Restore volume on unknown phase
+            _audio->setVolume(_savedVolume); // Restore volume on unknown phase
             if (_hadPreempt && _audio) {
-              Serial.println("StateMachine: chime unknown phase -> resuming preempted track");
+              Serial.println("StateMachine: chime unknown phase -> resuming "
+                             "preempted track");
               if (_audio->start(_preemptPath)) {
                 _state = _preemptState;
                 _isPlaying = true;
@@ -404,12 +452,14 @@ void StateMachine::periodic() {
         _lastTriggerAttempt = 0;
       }
     }
-  }
-  else if (_state == DHUN) {
+  } else if (_state == DHUN) {
     // stop after no-motion timeout
     if (now - _lastMotion > DHUN_SESSION_TIMEOUT_MS) {
-      Serial.println("StateMachine: DHUN session timeout (no motion) -> stopping");
-      if (_audio) _audio->stop();
+      Serial.println(
+          "StateMachine: DHUN session timeout (no motion) -> stopping");
+      if (_audio)
+        _audio->stop();
+      setRelayOff(); // Turn off light when dhun session ends
       _state = IDLE;
       _isPlaying = false;
       _lastTriggerAttempt = 0;
@@ -425,17 +475,18 @@ void StateMachine::periodic() {
         Serial.println("StateMachine: failed to start dhun (increment fail)");
         // If audio manager has many consecutive fails, reboot to recover
         if (_audio && _audio->getConsecutiveFails() >= 5) {
-          Serial.println("StateMachine: consecutive start failures >=5 -> rebooting");
+          Serial.println(
+              "StateMachine: consecutive start failures >=5 -> rebooting");
           delay(200);
           esp_restart();
         }
       }
     }
-  }
-  else if (_state == IDLE) {
+  } else if (_state == IDLE) {
     // if audio unexpectedly stopped but flags still set, clear them
     if (!_audio->isRunning() && _isPlaying) {
-      Serial.println("StateMachine: idle cleanup - audio not running but _isPlaying true -> clearing flags");
+      Serial.println("StateMachine: idle cleanup - audio not running but "
+                     "_isPlaying true -> clearing flags");
       _isPlaying = false;
       _lastTriggerAttempt = 0;
     }
@@ -443,6 +494,8 @@ void StateMachine::periodic() {
   }
 
   // Debug print for visibility:
-  // Serial.printf("DBG state=%d isPlaying=%d lastMotion=%lu lastTrigger=%lu audioRunning=%d\n",
-  //               _state, _isPlaying, _lastMotion, _lastTriggerAttempt, (_audio ? _audio->isRunning() : 0));
+  // Serial.printf("DBG state=%d isPlaying=%d lastMotion=%lu lastTrigger=%lu
+  // audioRunning=%d\n",
+  //               _state, _isPlaying, _lastMotion, _lastTriggerAttempt, (_audio
+  //               ? _audio->isRunning() : 0));
 }

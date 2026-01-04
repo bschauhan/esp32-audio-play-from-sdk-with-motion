@@ -1,48 +1,48 @@
 #ifndef STATE_MACHINE_H
 #define STATE_MACHINE_H
 
-#include <Arduino.h>
-#include <Preferences.h>
 #include "AudioManager.h"
 #include "FileScanner.h"
 #include "RtcClock.h"
 #include "Settings.h"
+#include <Arduino.h>
+#include <Preferences.h>
 
 class StateMachine {
 public:
-  enum State {
-    IDLE,
-    GREETING,
-    DHUN
-  };
+  enum State { IDLE, GREETING, DHUN };
 
-  StateMachine() = default; 
+  StateMachine() = default;
   void begin(AudioManager *audio, FileScanner *fs);
   void motionSample(bool motionHigh);
   void periodic();
 
   // Public methods
-  RtcClock& getRtc() { return _rtc; }  // Moved to public section
+  RtcClock &getRtc() { return _rtc; } // Moved to public section
+
+  // Relay control methods
+  void setRelayOn();
+  void setRelayOff();
 
   // DND and chime settings getters/setters
   int getDNDStartHour() const { return _dndStartHour; }
   int getDNDEndHour() const { return _dndEndHour; }
   int getChimeWindowSec() const { return _chimeWindowSec; }
   bool isDNDEnabled() const { return _dndEnabled; }
-  
+
   void setDNDHours(int startHour, int endHour) {
     _dndStartHour = startHour;
     _dndEndHour = endHour;
     saveSettings();
   }
-  
+
   void setChimeWindowSec(int seconds) {
     if (seconds > 0 && seconds <= 60) {
       _chimeWindowSec = seconds;
       saveSettings();
     }
   }
-  
+
   void setDNDEnabled(bool enabled) {
     _dndEnabled = enabled;
     saveSettings();
@@ -56,13 +56,13 @@ private:
   bool _isPlaying = false;
   unsigned long _lastMotion = 0;
   unsigned long _lastCheck = 0;
-  unsigned long _dhunSessionStart = 0;  // Track when Dhun session started
+  unsigned long _dhunSessionStart = 0; // Track when Dhun session started
   unsigned long _lastTriggerAttempt = 0;
   unsigned long _minGapMs = 500; // min gap between triggers
   bool _lastPirState = false;
 
   // RTC + chime
-  RtcClock _rtc;  // Single declaration of _rtc
+  RtcClock _rtc; // Single declaration of _rtc
   int _lastChimeHour = -1;
   bool _inChime = false;
   int _chimeBellRemaining = 0;
@@ -85,7 +85,7 @@ private:
   void startDhunSession();
   bool startRandomDhun();
   bool startChime();
-  
+
   // Save current settings to persistent storage
   void saveSettings() {
     Settings::DNDSettings settings;
@@ -94,13 +94,13 @@ private:
     settings.endHour = _dndEndHour;
     settings.windowSec = _chimeWindowSec;
     Settings::saveDNDSettings(settings);
-    
+
     Serial.println("Saved DND settings:");
     Serial.printf("  DND Enabled: %s\n", _dndEnabled ? "Yes" : "No");
-    Serial.printf("  DND Hours: %02d:00 - %02d:00\n", _dndStartHour, _dndEndHour);
+    Serial.printf("  DND Hours: %02d:00 - %02d:00\n", _dndStartHour,
+                  _dndEndHour);
     Serial.printf("  Chime Window: %d seconds\n", _chimeWindowSec);
   }
 };
-
 
 #endif // STATE_MACHINE_H
